@@ -1,0 +1,114 @@
+# Both jobs run on serverless compute. Python file tasks get the bundle's src/ path so they import the shared
+# library (src/aip_logic.py) and read the same config files as the app.
+
+resources:
+  jobs:
+    logic_setup:
+      name: aip-logic-p1 setup (UC objects, Logic functions, Action procedures, grants, connection)
+      description: Idempotent. Run after deploy and after `bundle run actions_api`, and again whenever a config file changes.
+      max_concurrent_runs: 1
+      timeout_seconds: 1800
+      parameters:
+        - name: reset_data
+          default: "false"          # true = drop and recreate the demo tables (objects, outbox, audit)
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - pyyaml>=6
+      tasks:
+        - task_key: setup_uc
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/jobs/setup.py
+            parameters:
+              - --src=${workspace.file_path}/src
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --model-endpoint=${var.model_endpoint}
+              - --batch-sp=${var.batch_sp_app_id}
+              - --app-name=${var.app_name}
+              - --demo-principals=${var.demo_principals}
+              - --reset-data={{job.parameters.reset_data}}
+        - task_key: create_connection
+          depends_on:
+            - task_key: setup_uc
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/jobs/create_connection.py
+            parameters:
+              - --src=${workspace.file_path}/src
+              - --app-name=${var.app_name}
+              - --connection-name=${var.connection_name}
+              - --secret-scope=${var.secret_scope}
+              - --batch-sp=${var.batch_sp_app_id}
+              - --call-mode=${var.call_mode}
+
+    logic_batch:
+      name: aip-logic-p1 batch (Logic over objects -> Actions API -> verify)
+      description: Runs as the batch service principal. propose -> send_actions -> verify. One generic job for every Logic config.
+      run_as:
+        service_principal_name: ${var.batch_sp_app_id}
+      max_concurrent_runs: 1
+      timeout_seconds: 3600
+      parameters:
+        - name: logic_name
+          default: summarize_document   # file name in src/config/logics/
+        - name: mode
+          default: missing              # missing = only objects without a value; all = every object
+        - name: call_mode
+          default: ${var.call_mode}     # connection = UC HTTP connection proxy; direct = OAuth M2M from the secret scope
+        - name: triggered_by
+          default: ""                   # empty = resolved from the run (who started it and the trigger type)
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "4"
+            dependencies:
+              - pyyaml>=6
+      tasks:
+        - task_key: propose
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/jobs/propose.py
+            parameters:
+              - --src=${workspace.file_path}/src
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --logic-name={{job.parameters.logic_name}}
+              - --run-id={{job.run_id}}
+              - --mode={{job.parameters.mode}}
+        - task_key: send_actions
+          depends_on:
+            - task_key: propose
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/jobs/send_actions.py
+            parameters:
+              - --src=${workspace.file_path}/src
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --logic-name={{job.parameters.logic_name}}
+              - --run-id={{job.run_id}}
+              - --job-id={{job.id}}
+              - --trigger-type={{job.trigger.type}}
+              - --triggered-by={{job.parameters.triggered_by}}
+              - --call-mode={{job.parameters.call_mode}}
+              - --connection-name=${var.connection_name}
+              - --app-name=${var.app_name}
+              - --secret-scope=${var.secret_scope}
+              - --concurrency=4
+        - task_key: verify
+          depends_on:
+            - task_key: send_actions
+          environment_key: default
+          spark_python_task:
+            python_file: ../src/jobs/verify.py
+            parameters:
+              - --src=${workspace.file_path}/src
+              - --catalog=${var.catalog}
+              - --schema=${var.schema}
+              - --logic-name={{job.parameters.logic_name}}
+              - --run-id={{job.run_id}}
+      # Batch SP CAN_VIEW (read its own run for triggered_by) comes from the top-level permissions in databricks.yml.

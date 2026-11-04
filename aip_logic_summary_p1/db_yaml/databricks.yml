@@ -1,0 +1,84 @@
+# AIP Logic archetype on Databricks (demo):
+#   object (UC row) -> LLM step (governed UC SQL function, ai_query) -> Action (Databricks App API -> UC procedure) -> same row
+# A new Logic of the same shape = a new file in src/config/logics/ + `bundle deploy` + `bundle run logic_setup`.
+# Prerequisite (one time, before the first deploy): scripts/bootstrap_service_principal.py  (see README.md)
+
+bundle:
+  name: aip_logic_summary_p1
+
+# Bundle root is db_yaml/ (kept out of the repo root on purpose); code and resources live one level up.
+include:
+  - ../resources/*.yml
+
+sync:
+  paths:
+    - ..
+
+# Top-level permissions apply to the deployment folder and every resource. The batch SP gets CAN_VIEW: it can read
+# the deployed source files (it runs the batch job), view its own job runs, and use the app (CAN_VIEW -> CAN_USE).
+permissions:
+  - user_name: ${workspace.current_user.userName}
+    level: CAN_MANAGE
+  - service_principal_name: ${var.batch_sp_app_id}
+    level: CAN_VIEW
+
+variables:
+  catalog:
+    description: Catalog that holds the demo schema
+    default: pj_demo_att_catalog
+  schema:
+    description: Schema for objects, outbox, audit, Logic functions and Action procedures (created by logic_setup)
+    default: aip_logic_actions
+  warehouse_id:
+    description: SQL warehouse used by the Actions API app (user and app SQL)
+    lookup:
+      warehouse: Serverless Starter Warehouse
+  model_endpoint:
+    description: Default chat model serving endpoint for ai_query (a Logic config may override it with llm.endpoint)
+    default: databricks-gpt-5-5
+  batch_sp_name:
+    description: Display name of the batch service principal (created by scripts/bootstrap_service_principal.py)
+    default: aip-logic-summary-p1-batch
+  batch_sp_app_id:
+    description: Application ID of the batch service principal (resolved by display name)
+    lookup:
+      service_principal: aip-logic-summary-p1-batch
+  secret_scope:
+    description: Secret scope with the batch service principal OAuth client id/secret (created by the bootstrap script)
+    default: aip_logic_summary_p1
+  app_name:
+    description: Actions API app name. App names are workspace-global, so dev is namespaced per developer
+    default: aip-sum-p1-${workspace.current_user.domain_friendly_name}
+  connection_name:
+    description: UC HTTP connection to the Actions API. Connections are metastore-global, so the name is namespaced
+    default: ${bundle.name}_${bundle.target}_actions_api
+  call_mode:
+    description: >-
+      How the batch reaches the Actions API. connection = UC HTTP connection proxy (needs CREATE CONNECTION on the
+      metastore to set up); direct = OAuth M2M with the batch SP secret from the secret scope
+    default: connection
+  app_users_group:
+    description: Workspace group allowed to open the app (on-demand page)
+    default: users
+  demo_principals:
+    description: Comma-separated users or groups that get UC access for the on-demand path (empty = only the deployer)
+    default: ""
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://fevm-pj-demo-att.cloud.databricks.com
+      # Copy files to the bundle folder instead of pointing at the git folder (the run-as SP cannot read the git folder).
+      sync_mode: overwrite
+
+  # Not deployed or tested in this demo; shows how the same bundle promotes.
+  prod:
+    mode: production
+    workspace:
+      host: https://fevm-pj-demo-att.cloud.databricks.com
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      schema: aip_logic_actions_prod
+      app_name: aip-sum-p1-prod

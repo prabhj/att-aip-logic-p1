@@ -1,0 +1,13 @@
+# Action inventory (the "Ontology" side). The Actions API only knows these actions, and each one may edit
+# exactly one property of one object table. A request payload can never choose the table or the column.
+# logic_setup generates one UC procedure per action (SQL SECURITY DEFINER), so callers need EXECUTE on the
+# procedure but no MODIFY on the table.
+
+actions:
+  updateTextSummary:                    # route: POST /api/actions/updateTextSummary
+    description: Set the plain-language summary of a document object
+    object_table: demo_documents        # in <catalog>.<schema>
+    id_column: document_id
+    property: text_summary              # + text_summary_updated_at / text_summary_updated_by
+    procedure: action_update_text_summary
+    max_value_length: 20000

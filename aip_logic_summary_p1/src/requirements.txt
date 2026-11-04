@@ -1,0 +1,7 @@
+# Actions API app dependencies (the jobs use the serverless environment in resources/jobs.yml)
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
+python-multipart>=0.0.9
+databricks-sql-connector>=4.0,<5
+databricks-sdk>=0.40
+pyyaml>=6

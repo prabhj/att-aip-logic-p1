@@ -1,0 +1,28 @@
+resources:
+  apps:
+    actions_api:
+      name: ${var.app_name}
+      description: Mock Actions API (POST /api/actions/<action>) and on-demand Logic page. Edits run as the caller through UC Action procedures; every request is audited.
+      # The whole src/ folder is the app source, so the app reads the SAME config files and shared library as the jobs.
+      source_code_path: ../src
+      # User authorization: Databricks forwards the caller's token (x-forwarded-access-token) so SQL runs as the caller.
+      user_api_scopes:
+        - sql
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+      config:
+        command: ["python", "app.py"]
+        env:
+          - name: DATABRICKS_WAREHOUSE_ID
+            value_from: sql-warehouse
+          - name: CATALOG
+            value: ${var.catalog}
+          - name: SCHEMA
+            value: ${var.schema}
+      # Batch SP CAN_USE comes from the top-level permissions (CAN_VIEW) in databricks.yml.
+      permissions:
+        - group_name: ${var.app_users_group}               # on-demand page
+          level: CAN_USE
